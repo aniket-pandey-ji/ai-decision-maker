@@ -1,0 +1,101 @@
+import { WebSocketServer } from 'ws';
+import * as tf from '@tensorflow/tfjs-node';
+import { createModel } from '../../lib/decisionModel';
+
+// Keep in-memory for demo (use Redis in production)
+const clients = new Set();
+let globalModel = null;
+const trainingQueue = [];
+let isTraining = false;
+
+export default function handler(req, res) {
+  if (!res.socket.server.wss) {
+      const wss = new WebSocketServer({ noServer: true });
+          res.socket.server.wss = wss;
+
+              wss.on('connection', (ws) => {
+                    clients.add(ws);
+                          
+                                // Send current model info to new client
+                                      if (globalModel) {
+                                              ws.send(JSON.stringify({
+                                                        type: 'model_info',
+                                                                  model: 'global_model_available'
+                                                                          }));
+                                                                                }
+
+                                                                                      ws.on('message', async (message) => {
+                                                                                              const data = JSON.parse(message);
+                                                                                                      
+                                                                                                              if (data.type === 'new_training_data') {
+                                                                                                                        trainingQueue.push(data.payload);
+                                                                                                                                  processTrainingQueue();
+                                                                                                                                          }
+                                                                                                                                                });
+
+                                                                                                                                                      ws.on('close', () => {
+                                                                                                                                                              clients.remove(ws);
+                                                                                                                                                                    });
+                                                                                                                                                                        });
+
+                                                                                                                                                                            // Initialize global model
+                                                                                                                                                                                (async () => {
+                                                                                                                                                                                      globalModel = await createModel(5); // Adjust input shape as needed
+                                                                                                                                                                                          })();
+                                                                                                                                                                                            }
+
+                                                                                                                                                                                              res.end();
+                                                                                                                                                                                              }
+
+                                                                                                                                                                                              async function processTrainingQueue() {
+                                                                                                                                                                                                if (isTraining || trainingQueue.length === 0) return;
+                                                                                                                                                                                                  
+                                                                                                                                                                                                    isTraining = true;
+                                                                                                                                                                                                      const batchSize = 32;
+                                                                                                                                                                                                        const batch = trainingQueue.splice(0, batchSize);
+                                                                                                                                                                                                          
+                                                                                                                                                                                                            try {
+                                                                                                                                                                                                                // Convert training data to tensors
+                                                                                                                                                                                                                    const inputs = batch.map(item => item.inputs);
+                                                                                                                                                                                                                        const labels = batch.map(item => item.label);
+                                                                                                                                                                                                                            
+                                                                                                                                                                                                                                const inputTensor = tf.tensor2d(inputs);
+                                                                                                                                                                                                                                    const labelTensor = tf.tensor2d(labels);
+                                                                                                                                                                                                                                        
+                                                                                                                                                                                                                                            // Train incrementally
+                                                                                                                                                                                                                                                const history = await globalModel.fit(inputTensor, labelTensor, {
+                                                                                                                                                                                                                                                      epochs: 1,
+                                                                                                                                                                                                                                                            batchSize: Math.min(batch.length, 32),
+                                                                                                                                                                                                                                                                  verbose: 0
+                                                                                                                                                                                                                                                                      });
+                                                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                                                              // Broadcast model update
+                                                                                                                                                                                                                                                                                  const modelArtifacts = await globalModel.save('localstorage://global-model');
+                                                                                                                                                                                                                                                                                      const update = JSON.stringify({
+                                                                                                                                                                                                                                                                                            type: 'model_update',
+                                                                                                                                                                                                                                                                                                  accuracy: history.history.acc[0],
+                                                                                                                                                                                                                                                                                                        loss: history.history.loss[0],
+                                                                                                                                                                                                                                                                                                              modelPath: 'localstorage://global-model'
+                                                                                                                                                                                                                                                                                                                  });
+                                                                                                                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                                                                                          clients.forEach(client => {
+                                                                                                                                                                                                                                                                                                                                if (client.readyState === WebSocket.OPEN) {
+                                                                                                                                                                                                                                                                                                                                        client.send(update);
+                                                                                                                                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                                                                                                                                                  });
+                                                                                                                                                                                                                                                                                                                                                    } catch (error) {
+                                                                                                                                                                                                                                                                                                                                                        console.error('Training error:', error);
+                                                                                                                                                                                                                                                                                                                                                          } finally {
+                                                                                                                                                                                                                                                                                                                                                              isTraining = false;
+                                                                                                                                                                                                                                                                                                                                                                  if (trainingQueue.length > 0) {
+                                                                                                                                                                                                                                                                                                                                                                        setImmediate(processTrainingQueue);
+                                                                                                                                                                                                                                                                                                                                                                            }
+                                                                                                                                                                                                                                                                                                                                                                              }
+                                                                                                                                                                                                                                                                                                                                                                              }
+
+                                                                                                                                                                                                                                                                                                                                                                              // Add to Next.js API route config
+                                                                                                                                                                                                                                                                                                                                                                              export const config = {
+                                                                                                                                                                                                                                                                                                                                                                                api: {
+                                                                                                                                                                                                                                                                                                                                                                                    bodyParser: false
+                                                                                                                                                                                                                                                                                                                                                                                      }
+                                                                                                                                                                                                                                                                                                                                                                                      };

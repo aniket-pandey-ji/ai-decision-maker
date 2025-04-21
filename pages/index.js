@@ -1,11 +1,17 @@
 import { useState } from 'react';
 import DecisionInput from '../components/DecisionInput';
+import ModelVersionControl from '../components/ModelVersionControl';
+import { ModelManager } from '../lib/modelManager';
+import RealtimeTraining from '../components/RealtimeTraining';
+
 
 export default function Home() {
   const [decision, setDecision] = useState(null);
+  const [lastInputs, setLastInputs] = useState([]);
     const [trainingData, setTrainingData] = useState([]);
       const [trainingLabels, setTrainingLabels] = useState([]);
-        
+        const [modelManager] = useState(new ModelManager());
+
           const addTrainingExample = (inputs, label) => {
               setTrainingData([...trainingData, inputs]);
                   setTrainingLabels([...trainingLabels, [label]]);
@@ -22,6 +28,18 @@ export default function Home() {
                                                                             labels: trainingLabels
                                                                                   }),
                                                                                       });
+
+
+                                                                                      const handleSubmit = async () => {
+                                                                                          const model = await tf.loadLayersModel('localstorage://my-decision-model');
+                                                                                            const inputTensor = tf.tensor2d([inputValues]);
+                                                                                              setLastInputs(inputValues); // Store for feedback
+                                                                                                
+                                                                                                  const prediction = model.predict(inputTensor);
+                                                                                                    const result = await prediction.data();
+                                                                                                      onPredict(result[0]);
+                                                                                                      };
+                                                                                      
                                                                                           const result = await response.json();
                                                                                               console.log('Training complete:', result);
                                                                                                 };
@@ -36,6 +54,20 @@ export default function Home() {
                                                                                                                                                   {decision !== null && (
                                                                                                                                                             <p>Decision confidence: {(decision * 100).toFixed(1)}%</p>
                                                                                                                                                                     )}
+
+                                                                                                                                                                    <section>
+                                                                                                                                                                        <h2>Continuous Learning</h2>
+                                                                                                                                                                          <RealtimeTraining 
+                                                                                                                                                                              modelManager={modelManager}
+                                                                                                                                                                                  dataManager={dataManager}
+                                                                                                                                                                                    />
+                                                                                                                                                                                    </section>
+                                                                                                                                                                         
+                                                                                                                                                                         <section>
+                                                                                                                                                                            <h2>Model Version Control</h2>
+                                                                                                                                                                              <ModelVersionControl dataManager={dataManager} />
+                                                                                                                                                                              </section>
+                                                                                                                                                                         
                                                                                                                                                                           </section>
                                                                                                                                                                                 
                                                                                                                                                                                       <section>
